@@ -261,10 +261,18 @@ const BuilderPage = () => {
         console.log('Compressed image size:', (imagePreview.length / 1024).toFixed(2), 'KB')
       }
 
-      // Never send PDF - it's too large and not essential for email
-      // User can download PDF separately if needed
-      const pdfBase64: string | undefined = undefined
-      console.log('PDF attachment skipped to reduce payload size')
+      // Generate PDF and include it so the designer receives full specification.
+      // If the payload becomes too large we'll drop the imagePreview first, then the PDF.
+      let pdfBase64: string | undefined = undefined
+      try {
+        const previewNode = activeTab === 'name' ? previewElementRef.current : null
+        pdfBase64 = await generatePDF(config, customerDetails, previewNode)
+        setGeneratedPdfBase64(pdfBase64)
+        console.log('Generated PDF size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
+      } catch (e) {
+        console.warn('PDF generation failed, continuing without PDF:', e)
+        pdfBase64 = undefined
+      }
 
       // Calculate total payload size
       const payload = {
@@ -274,13 +282,23 @@ const BuilderPage = () => {
         pdfBase64,
         timestamp: new Date().toISOString(),
       }
-      const payloadSize = JSON.stringify(payload).length
+      let payloadSize = JSON.stringify(payload).length
       console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
 
-      // If still too large, remove image preview
+      // If still too large, remove image preview first
       if (payloadSize > 3 * 1024 * 1024) {
-        console.warn('Payload still too large, removing image preview')
+        console.warn('Payload too large, removing image preview')
         payload.imagePreview = undefined
+        payloadSize = JSON.stringify(payload).length
+        console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
+      }
+
+      // If still too large after removing image, drop PDF
+      if (payloadSize > 3 * 1024 * 1024) {
+        console.warn('Payload still too large, removing PDF attachment')
+        payload.pdfBase64 = undefined
+        payloadSize = JSON.stringify(payload).length
+        console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
       }
 
       const response = await api.post('/neon-request', payload)
