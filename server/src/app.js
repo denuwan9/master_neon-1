@@ -14,8 +14,10 @@ app.use(
     credentials: true,
   }),
 )
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true }))
+// Allow larger payloads (client may send base64-encoded PDFs/images).
+// Increase limits to accommodate larger design payloads. Adjust if needed.
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 app.use(morgan('dev'))
 
 app.get('/api/health', (req, res) => {

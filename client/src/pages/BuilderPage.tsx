@@ -285,8 +285,11 @@ const BuilderPage = () => {
       let payloadSize = JSON.stringify(payload).length
       console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
 
+      // Conservative thresholds to avoid Vercel/server limits (~4.5MB)
+      const MAX_SAFE_PAYLOAD = 2.5 * 1024 * 1024 // 2.5MB to leave headroom for encoding
+
       // If still too large, remove image preview first
-      if (payloadSize > 3 * 1024 * 1024) {
+      if (payloadSize > MAX_SAFE_PAYLOAD) {
         console.warn('Payload too large, removing image preview')
         payload.imagePreview = undefined
         payloadSize = JSON.stringify(payload).length
@@ -294,11 +297,22 @@ const BuilderPage = () => {
       }
 
       // If still too large after removing image, drop PDF
-      if (payloadSize > 3 * 1024 * 1024) {
+      if (payloadSize > MAX_SAFE_PAYLOAD) {
         console.warn('Payload still too large, removing PDF attachment')
         payload.pdfBase64 = undefined
         payloadSize = JSON.stringify(payload).length
         console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+      }
+
+      // Final guard: if payload still exceeds a safe limit, abort with friendly message
+      const FINAL_LIMIT = 3.8 * 1024 * 1024 // 3.8MB absolute upper guard
+      if (payloadSize > FINAL_LIMIT) {
+        setStatus({
+          type: 'error',
+          message: 'Request too large. Try removing the PDF or using a smaller image.',
+        })
+        setIsSending(false)
+        return
       }
 
       const response = await api.post('/neon-request', payload)
