@@ -139,6 +139,8 @@ const sendNeonRequestEmail = async (request) => {
       }
       await sgMail.send(msg)
       console.log('✅ Neon request email sent successfully via SendGrid')
+      console.log('📬 Email sent to:', process.env.DESIGNER_EMAIL)
+      console.log('📎 Attachments:', attachment.length, 'file(s)')
     } else {
       await transporter.sendMail({
         from: `Master Neon Builder <${process.env.SMTP_USER}>`,
@@ -148,6 +150,8 @@ const sendNeonRequestEmail = async (request) => {
         attachments: attachment.length > 0 ? attachment.map((a) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64') })) : undefined,
       })
       console.log('✅ Neon request email sent successfully via SMTP')
+      console.log('📬 Email sent to:', process.env.DESIGNER_EMAIL)
+      console.log('📎 Attachments:', attachment.length, 'file(s)')
     }
   } catch (err) {
     // Log full error object for diagnostics

@@ -52,7 +52,8 @@ const BuilderPage = () => {
     email?: string
     phone?: string
   }>({})
-  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null)
+  // PDF is generated but not sent to reduce payload size - user can download separately
+  const [, setGeneratedPdfBase64] = useState<string | null>(null)
   const [templateModalPdfBase64, setTemplateModalPdfBase64] = useState<string | null>(null)
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<typeof defaultTemplates[0] | null>(null)
   const [templateModalConfig, setTemplateModalConfig] = useState<{
@@ -191,6 +192,57 @@ const BuilderPage = () => {
     setGeneratedPdfBase64(pdfBase64)
   }
 
+  // Helper function to compress image aggressively
+  const compressImage = (base64String: string, maxSizeKB: number = 300): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let width = img.width
+        let height = img.height
+        let quality = 0.7 // Start with lower quality
+
+        // More aggressive resizing - max 800px instead of 1200px
+        const maxDimension = 800
+        if (width > maxDimension || height > maxDimension) {
+          const ratio = Math.min(maxDimension / width, maxDimension / height)
+          width = Math.floor(width * ratio)
+          height = Math.floor(height * ratio)
+        }
+
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height)
+          let compressed = canvas.toDataURL('image/jpeg', quality)
+          
+          // If still too large, reduce quality more aggressively
+          while (compressed.length > maxSizeKB * 1024 && quality > 0.2) {
+            quality -= 0.05
+            compressed = canvas.toDataURL('image/jpeg', quality)
+          }
+          
+          // If still too large after quality reduction, resize more
+          if (compressed.length > maxSizeKB * 1024) {
+            width = Math.floor(width * 0.8)
+            height = Math.floor(height * 0.8)
+            canvas.width = width
+            canvas.height = height
+            ctx.drawImage(img, 0, 0, width, height)
+            compressed = canvas.toDataURL('image/jpeg', 0.5)
+          }
+          
+          resolve(compressed)
+        } else {
+          resolve(base64String)
+        }
+      }
+      img.onerror = () => resolve(base64String)
+      img.src = base64String
+    })
+  }
+
   const handleSendToDesigner = async () => {
     if (!validateCustomerDetails()) return
 
@@ -200,35 +252,67 @@ const BuilderPage = () => {
     try {
       const config = getCurrentConfig()
       // For logo, use uploaded image; for name, capture canvas
-      const imagePreview = activeTab === 'logo' ? (config as LogoSignConfig).imageData : previewRef.current?.getImage()
+      let imagePreview = activeTab === 'logo' ? (config as LogoSignConfig).imageData : previewRef.current?.getImage()
 
-      // Use stored PDF if available, otherwise generate a new one
-      let pdfBase64 = generatedPdfBase64
-      if (!pdfBase64) {
-        // Generate PDF and get base64 representation (also triggers download)
-        const previewNode = activeTab === 'name' ? previewElementRef.current : null
-        pdfBase64 = await generatePDF(config, customerDetails, previewNode)
-        setGeneratedPdfBase64(pdfBase64)
+      // Always compress image to ensure it's small enough (max 300KB)
+      if (imagePreview) {
+        console.log('Original image size:', (imagePreview.length / 1024).toFixed(2), 'KB')
+        imagePreview = await compressImage(imagePreview, 300) // Aggressively compress to max 300KB
+        console.log('Compressed image size:', (imagePreview.length / 1024).toFixed(2), 'KB')
       }
 
-      const response = await api.post('/neon-request', {
+      // Never send PDF - it's too large and not essential for email
+      // User can download PDF separately if needed
+      const pdfBase64: string | undefined = undefined
+      console.log('PDF attachment skipped to reduce payload size')
+
+      // Calculate total payload size
+      const payload = {
         ...customerDetails,
         config,
         imagePreview,
         pdfBase64,
         timestamp: new Date().toISOString(),
-      })
+      }
+      const payloadSize = JSON.stringify(payload).length
+      console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
+
+      // If still too large, remove image preview
+      if (payloadSize > 3 * 1024 * 1024) {
+        console.warn('Payload still too large, removing image preview')
+        payload.imagePreview = undefined
+      }
+
+      const response = await api.post('/neon-request', payload)
 
       const responseData = response?.data || {}
+      const successMessage = responseData.emailSent 
+        ? '✅ Design sent successfully! A Master Neon designer will contact you at ' + customerDetails.email + ' within 1 business day.'
+        : responseData.message || '✅ Design request received! A Master Neon designer will contact you within 1 business day.'
+      
       setStatus({
         type: 'success',
-        message: responseData.message || 'Sent! A Master Neon designer will reply with proofs within 1 business day.',
+        message: successMessage,
       })
+      
+      console.log('✅ Design request submitted successfully')
+      console.log('Response:', responseData)
       setCustomerDetails({ customerName: '', email: '', phone: '', notes: '' })
       // Clear stored PDF after successful send
       setGeneratedPdfBase64(null)
     } catch (error: any) {
-      const errorMessage = error?.response?.data?.message || error?.message || 'We could not submit the request. Check your connection or try again shortly.'
+      let errorMessage = error?.response?.data?.message || error?.message || 'We could not submit the request. Check your connection or try again shortly.'
+      
+      // Handle 413 Payload Too Large error specifically
+      if (error?.response?.status === 413) {
+        errorMessage = error?.response?.data?.message || 'Request too large. Please try with a smaller image or without PDF attachment.'
+      }
+      
+      // Show suggestion if provided
+      if (error?.response?.data?.suggestion) {
+        errorMessage += ` ${error.response.data.suggestion}`
+      }
+      
       setStatus({
         type: 'error',
         message: errorMessage,

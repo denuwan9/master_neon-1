@@ -4,6 +4,14 @@
   "outputDirectory": "client/dist",
   "installCommand": "cd client && npm install && cd ../server && npm install && cd ../api && npm install",
   "framework": "vite",
+  "functions": {
+    "api/neon-request.js": {
+      "maxDuration": 60
+    },
+    "api/contact.js": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",

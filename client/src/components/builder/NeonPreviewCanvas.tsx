@@ -23,7 +23,12 @@ const NeonPreviewCanvas = forwardRef<NeonPreviewHandle, BuilderConfig>((config, 
   const animationFrameRef = useRef<number | undefined>(undefined)
 
   useImperativeHandle(ref, () => ({
-    getImage: () => canvasRef.current?.toDataURL('image/png') ?? undefined,
+    getImage: () => {
+      const canvas = canvasRef.current
+      if (!canvas) return undefined
+      // Use JPEG instead of PNG for smaller file size
+      return canvas.toDataURL('image/jpeg', 0.85) ?? undefined
+    },
     spark: () => setSparkIndex((prev) => prev + 1),
     toggleAnimation: () => setIsAnimating((prev) => !prev),
   }))

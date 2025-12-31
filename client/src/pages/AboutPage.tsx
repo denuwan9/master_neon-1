@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Sparkles, Heart, Store, Home, Calendar, Award, Zap, Package } from 'lucide-react'
 import { Link } from 'react-router-dom'
