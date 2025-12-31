@@ -254,21 +254,27 @@ const BuilderPage = () => {
       // For logo, use uploaded image; for name, capture canvas
       let imagePreview = activeTab === 'logo' ? (config as LogoSignConfig).imageData : previewRef.current?.getImage()
 
-      // Always compress image to ensure it's small enough (max 300KB)
+      // Always compress image to ensure it's small enough. Use more aggressive targets for templates.
       if (imagePreview) {
+        const targetKB = activeTab === 'template' ? 150 : 250
         console.log('Original image size:', (imagePreview.length / 1024).toFixed(2), 'KB')
-        imagePreview = await compressImage(imagePreview, 300) // Aggressively compress to max 300KB
+        imagePreview = await compressImage(imagePreview, targetKB)
         console.log('Compressed image size:', (imagePreview.length / 1024).toFixed(2), 'KB')
       }
 
       // Generate PDF and include it so the designer receives full specification.
+      // For template presets, skip generating/sending the PDF to keep payload small on constrained platforms.
       // If the payload becomes too large we'll drop the imagePreview first, then the PDF.
       let pdfBase64: string | undefined = undefined
       try {
-        const previewNode = activeTab === 'name' ? previewElementRef.current : null
-        pdfBase64 = await generatePDF(config, customerDetails, previewNode)
-        setGeneratedPdfBase64(pdfBase64)
-        console.log('Generated PDF size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
+        if (activeTab !== 'template') {
+          const previewNode = activeTab === 'name' ? previewElementRef.current : null
+          pdfBase64 = await generatePDF(config, customerDetails, previewNode)
+          setGeneratedPdfBase64(pdfBase64)
+          console.log('Generated PDF size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
+        } else {
+          console.log('Skipping PDF generation for template presets to reduce payload size')
+        }
       } catch (e) {
         console.warn('PDF generation failed, continuing without PDF:', e)
         pdfBase64 = undefined
@@ -286,7 +292,7 @@ const BuilderPage = () => {
       console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
 
       // Conservative thresholds to avoid Vercel/server limits (~4.5MB)
-      const MAX_SAFE_PAYLOAD = 2.5 * 1024 * 1024 // 2.5MB to leave headroom for encoding
+      const MAX_SAFE_PAYLOAD = 2.0 * 1024 * 1024 // 2MB to leave headroom for encoding on serverless platforms
 
       // If still too large, remove image preview first
       if (payloadSize > MAX_SAFE_PAYLOAD) {
