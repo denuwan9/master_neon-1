@@ -230,7 +230,7 @@ const BuilderPage = () => {
         const canvas = document.createElement('canvas')
         let width = img.width
         let height = img.height
-        let quality = 0.65 // Start with lower quality for better compression
+        let quality = 0.5 // Start with even lower quality for better compression
 
         // Resize if larger than maxDimension
         if (width > maxDimension || height > maxDimension) {
@@ -309,50 +309,68 @@ const BuilderPage = () => {
         pdfBase64 = undefined
       }
 
-      // Calculate total payload size
-      const payload = {
+      // Build payload with very conservative size limits to avoid 413 errors
+      const payload: any = {
         ...customerDetails,
         config,
-        imagePreview,
-        pdfBase64,
         timestamp: new Date().toISOString(),
       }
-      let payloadSize = JSON.stringify(payload).length
-      console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
-
-      // Conservative thresholds to avoid Vercel/server limits (~4.5MB)
-      const MAX_SAFE_PAYLOAD = 2.0 * 1024 * 1024 // 2MB to leave headroom for encoding on serverless platforms
-
-      // If still too large, remove image preview first
-      if (payloadSize > MAX_SAFE_PAYLOAD) {
-        console.warn('Payload too large, removing image preview')
-        payload.imagePreview = undefined
-        payloadSize = JSON.stringify(payload).length
-        console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
-      }
-
-      // If still too large after removing image, drop PDF
-      if (payloadSize > MAX_SAFE_PAYLOAD) {
-        console.warn('Payload still too large, removing PDF attachment')
-        payload.pdfBase64 = undefined
-        payloadSize = JSON.stringify(payload).length
-        console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
-      }
-
-      // Final guard: if payload still exceeds a safe limit, try removing PDF if not already removed
-      const FINAL_LIMIT = 3.8 * 1024 * 1024 // 3.8MB absolute upper guard
-      if (payloadSize > FINAL_LIMIT && payload.pdfBase64) {
-        console.warn('Payload still too large, removing PDF as final attempt')
-        payload.pdfBase64 = undefined
-        payloadSize = JSON.stringify(payload).length
-        console.log('Final payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+      
+      // Use very conservative limit (1.5MB) to account for JSON encoding overhead
+      const MAX_SAFE_PAYLOAD = 1.5 * 1024 * 1024 // 1.5MB - very conservative
+      
+      // Check base payload size first
+      let basePayloadSize = JSON.stringify(payload).length
+      console.log('Base payload size:', (basePayloadSize / 1024).toFixed(2), 'KB')
+      
+      // Add image preview only if it fits
+      if (imagePreview && imagePreview.length < 150 * 1024) {
+        const tempSize = JSON.stringify({ ...payload, imagePreview }).length
+        if (tempSize < MAX_SAFE_PAYLOAD) {
+          payload.imagePreview = imagePreview
+          console.log('Added image preview, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
+        } else {
+          console.warn('Image preview too large, skipping to avoid 413 error')
+        }
+      } else if (imagePreview) {
+        console.warn('Image preview too large, skipping to avoid 413 error')
       }
       
-      // If still too large, abort with message
+      // Check if we can add PDF
+      let currentSize = JSON.stringify(payload).length
+      if (pdfBase64) {
+        const sizeWithPdf = JSON.stringify({ ...payload, pdfBase64 }).length
+        if (sizeWithPdf < MAX_SAFE_PAYLOAD) {
+          payload.pdfBase64 = pdfBase64
+          console.log('Added PDF, size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
+        } else {
+          console.warn('PDF too large, skipping to avoid 413 error')
+        }
+      }
+      
+      let payloadSize = JSON.stringify(payload).length
+      console.log('Total payload size:', (payloadSize / 1024).toFixed(2), 'KB')
+      
+      // Final check - if still too large, remove attachments
+      if (payloadSize > MAX_SAFE_PAYLOAD) {
+        if (payload.pdfBase64) {
+          console.warn('Payload too large, removing PDF')
+          payload.pdfBase64 = undefined
+          payloadSize = JSON.stringify(payload).length
+        }
+        if (payloadSize > MAX_SAFE_PAYLOAD && payload.imagePreview) {
+          console.warn('Payload still too large, removing image preview')
+          payload.imagePreview = undefined
+          payloadSize = JSON.stringify(payload).length
+        }
+      }
+      
+      // Absolute limit - abort if still too large
+      const FINAL_LIMIT = 1.8 * 1024 * 1024 // 1.8MB absolute limit
       if (payloadSize > FINAL_LIMIT) {
         setStatus({
           type: 'error',
-          message: 'Request too large. Please try again - design details will be sent, but attachments were removed to ensure delivery.',
+          message: 'Request too large. Design details will be sent, but attachments were removed to ensure delivery.',
         })
         setIsSending(false)
         return
@@ -844,9 +862,15 @@ const BuilderPage = () => {
                        let imagePreview: string | undefined = undefined
                        try {
                          const base64Image = await convertImageUrlToBase64(selectedTemplateForModal.imageUrl)
-                         // More aggressive compression for templates: smaller target size and max dimension
-                         imagePreview = await compressImage(base64Image, 120, 600)
+                         // Very aggressive compression for templates to ensure small payload
+                         imagePreview = await compressImage(base64Image, 100, 500)
                          console.log('Converted template image to base64, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
+                         
+                         // If still too large after compression, skip it
+                         if (imagePreview.length > 150 * 1024) {
+                           console.warn('Image still too large after compression, skipping image preview')
+                           imagePreview = undefined
+                         }
                        } catch (imgError) {
                          console.warn('Failed to convert template image to base64:', imgError)
                          // Continue without image preview if conversion fails
@@ -864,64 +888,57 @@ const BuilderPage = () => {
                        }
                        
                        // Build payload and check size before sending
-                       const payload = {
+                       // Use very conservative limits to avoid 413 errors
+                       const payload: any = {
                          ...customerDetails,
                          config,
-                         imagePreview,
-                         pdfBase64,
                          timestamp: new Date().toISOString(),
                        }
+                       
+                       // Add image preview only if it's small enough
+                       if (imagePreview && imagePreview.length < 120 * 1024) {
+                         payload.imagePreview = imagePreview
+                       }
+                       
+                       // Add PDF only if it's small enough, and only if there's room
+                       let tempPayloadSize = JSON.stringify({ ...payload, pdfBase64 }).length
+                       const MAX_SAFE_PAYLOAD = 1.5 * 1024 * 1024 // Very conservative: 1.5MB
+                       
+                       if (pdfBase64 && tempPayloadSize < MAX_SAFE_PAYLOAD) {
+                         payload.pdfBase64 = pdfBase64
+                       } else if (pdfBase64) {
+                         console.warn('PDF too large, skipping to avoid 413 error')
+                       }
+                       
+                       // Final size check
                        let payloadSize = JSON.stringify(payload).length
                        console.log('Template payload size:', (payloadSize / 1024).toFixed(2), 'KB')
                        
-                       // Conservative thresholds to avoid Vercel/server limits (~4.5MB)
-                       const MAX_SAFE_PAYLOAD = 2.0 * 1024 * 1024 // 2MB to leave headroom for encoding on serverless platforms
-                       
-                       // If still too large, remove image preview first
-                       if (payloadSize > MAX_SAFE_PAYLOAD) {
-                         console.warn('Template payload too large, removing image preview')
-                         payload.imagePreview = undefined
-                         payloadSize = JSON.stringify(payload).length
-                         console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
-                       }
-                       
-                       // If still too large after removing image, drop PDF
-                       if (payloadSize > MAX_SAFE_PAYLOAD) {
-                         console.warn('Template payload still too large, removing PDF attachment')
+                       // If still too large, remove PDF
+                       if (payloadSize > MAX_SAFE_PAYLOAD && payload.pdfBase64) {
+                         console.warn('Template payload too large, removing PDF')
                          payload.pdfBase64 = undefined
                          payloadSize = JSON.stringify(payload).length
                          console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
                        }
                        
-                       // Final guard: if payload still exceeds a safe limit, try without PDF
-                       const FINAL_LIMIT = 3.8 * 1024 * 1024 // 3.8MB absolute upper guard
-                       if (payloadSize > FINAL_LIMIT && payload.pdfBase64) {
-                         console.warn('Payload still too large, removing PDF as final attempt')
-                         payload.pdfBase64 = undefined
+                       // Remove image if still too large
+                       if (payloadSize > MAX_SAFE_PAYLOAD && payload.imagePreview) {
+                         console.warn('Template payload still too large, removing image preview')
+                         payload.imagePreview = undefined
                          payloadSize = JSON.stringify(payload).length
-                         console.log('Final payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+                         console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
                        }
                        
-                       // If still too large, abort with message
+                       // Final guard - abort if still too large
+                       const FINAL_LIMIT = 2.0 * 1024 * 1024 // 2MB absolute limit
                        if (payloadSize > FINAL_LIMIT) {
                          setStatus({
                            type: 'error',
-                           message: 'Request too large. Please try again - the design details will be sent, but some attachments may be excluded.',
+                           message: 'Request too large. Design details will be sent, but attachments were removed to ensure delivery.',
                          })
                          setIsSending(false)
                          return
-                       }
-                       
-                       // Show warning if attachments were removed
-                       let warningMessage = ''
-                       if (!payload.imagePreview && imagePreview) {
-                         warningMessage = 'Image preview was removed to reduce size. '
-                       }
-                       if (!payload.pdfBase64 && pdfBase64) {
-                         warningMessage += 'PDF was removed to reduce size. '
-                       }
-                       if (warningMessage) {
-                         console.warn('Attachments removed:', warningMessage)
                        }
                        
                        const response = await api.post('/neon-request', payload)
