@@ -223,17 +223,16 @@ const BuilderPage = () => {
   }
 
   // Helper function to compress image aggressively
-  const compressImage = (base64String: string, maxSizeKB: number = 300): Promise<string> => {
+  const compressImage = (base64String: string, maxSizeKB: number = 300, maxDimension: number = 800): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image()
       img.onload = () => {
         const canvas = document.createElement('canvas')
         let width = img.width
         let height = img.height
-        let quality = 0.7 // Start with lower quality
+        let quality = 0.65 // Start with lower quality for better compression
 
-        // More aggressive resizing - max 800px instead of 1200px
-        const maxDimension = 800
+        // Resize if larger than maxDimension
         if (width > maxDimension || height > maxDimension) {
           const ratio = Math.min(maxDimension / width, maxDimension / height)
           width = Math.floor(width * ratio)
@@ -340,12 +339,20 @@ const BuilderPage = () => {
         console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
       }
 
-      // Final guard: if payload still exceeds a safe limit, abort with friendly message
+      // Final guard: if payload still exceeds a safe limit, try removing PDF if not already removed
       const FINAL_LIMIT = 3.8 * 1024 * 1024 // 3.8MB absolute upper guard
+      if (payloadSize > FINAL_LIMIT && payload.pdfBase64) {
+        console.warn('Payload still too large, removing PDF as final attempt')
+        payload.pdfBase64 = undefined
+        payloadSize = JSON.stringify(payload).length
+        console.log('Final payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+      }
+      
+      // If still too large, abort with message
       if (payloadSize > FINAL_LIMIT) {
         setStatus({
           type: 'error',
-          message: 'Request too large. Try removing the PDF or using a smaller image.',
+          message: 'Request too large. Please try again - design details will be sent, but attachments were removed to ensure delivery.',
         })
         setIsSending(false)
         return
@@ -837,8 +844,8 @@ const BuilderPage = () => {
                        let imagePreview: string | undefined = undefined
                        try {
                          const base64Image = await convertImageUrlToBase64(selectedTemplateForModal.imageUrl)
-                         // Compress the image to reduce payload size
-                         imagePreview = await compressImage(base64Image, 200)
+                         // More aggressive compression for templates: smaller target size and max dimension
+                         imagePreview = await compressImage(base64Image, 120, 600)
                          console.log('Converted template image to base64, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
                        } catch (imgError) {
                          console.warn('Failed to convert template image to base64:', imgError)
@@ -856,13 +863,68 @@ const BuilderPage = () => {
                          // Continue without PDF if generation fails
                        }
                        
-                       const response = await api.post('/neon-request', {
+                       // Build payload and check size before sending
+                       const payload = {
                          ...customerDetails,
                          config,
                          imagePreview,
                          pdfBase64,
                          timestamp: new Date().toISOString(),
-                       })
+                       }
+                       let payloadSize = JSON.stringify(payload).length
+                       console.log('Template payload size:', (payloadSize / 1024).toFixed(2), 'KB')
+                       
+                       // Conservative thresholds to avoid Vercel/server limits (~4.5MB)
+                       const MAX_SAFE_PAYLOAD = 2.0 * 1024 * 1024 // 2MB to leave headroom for encoding on serverless platforms
+                       
+                       // If still too large, remove image preview first
+                       if (payloadSize > MAX_SAFE_PAYLOAD) {
+                         console.warn('Template payload too large, removing image preview')
+                         payload.imagePreview = undefined
+                         payloadSize = JSON.stringify(payload).length
+                         console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
+                       }
+                       
+                       // If still too large after removing image, drop PDF
+                       if (payloadSize > MAX_SAFE_PAYLOAD) {
+                         console.warn('Template payload still too large, removing PDF attachment')
+                         payload.pdfBase64 = undefined
+                         payloadSize = JSON.stringify(payload).length
+                         console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+                       }
+                       
+                       // Final guard: if payload still exceeds a safe limit, try without PDF
+                       const FINAL_LIMIT = 3.8 * 1024 * 1024 // 3.8MB absolute upper guard
+                       if (payloadSize > FINAL_LIMIT && payload.pdfBase64) {
+                         console.warn('Payload still too large, removing PDF as final attempt')
+                         payload.pdfBase64 = undefined
+                         payloadSize = JSON.stringify(payload).length
+                         console.log('Final payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
+                       }
+                       
+                       // If still too large, abort with message
+                       if (payloadSize > FINAL_LIMIT) {
+                         setStatus({
+                           type: 'error',
+                           message: 'Request too large. Please try again - the design details will be sent, but some attachments may be excluded.',
+                         })
+                         setIsSending(false)
+                         return
+                       }
+                       
+                       // Show warning if attachments were removed
+                       let warningMessage = ''
+                       if (!payload.imagePreview && imagePreview) {
+                         warningMessage = 'Image preview was removed to reduce size. '
+                       }
+                       if (!payload.pdfBase64 && pdfBase64) {
+                         warningMessage += 'PDF was removed to reduce size. '
+                       }
+                       if (warningMessage) {
+                         console.warn('Attachments removed:', warningMessage)
+                       }
+                       
+                       const response = await api.post('/neon-request', payload)
                        const responseData = response?.data || {}
                        setStatus({
                          type: 'success',

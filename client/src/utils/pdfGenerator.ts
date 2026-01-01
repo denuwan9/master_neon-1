@@ -333,7 +333,30 @@ export async function generatePDF(
       doc.setLineWidth(0.5)
       doc.roundedRect(imgX - 1, yPos - 1, finalWidth + 2, finalHeight + 2, 2, 2, 'S')
       
-      doc.addImage(imgData, 'PNG', imgX, yPos, finalWidth, finalHeight)
+      // Compress logo image to JPEG for smaller PDF size
+      let compressedLogoData = imgData
+      if (imgData.startsWith('data:image/png') || imgData.startsWith('data:image')) {
+        try {
+          const canvas = document.createElement('canvas')
+          const tempImg = new Image()
+          await new Promise<void>((resolve, reject) => {
+            tempImg.onload = () => resolve()
+            tempImg.onerror = reject
+            tempImg.src = imgData
+          })
+          canvas.width = tempImg.width
+          canvas.height = tempImg.height
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(tempImg, 0, 0)
+            compressedLogoData = canvas.toDataURL('image/jpeg', 0.75)
+          }
+        } catch {
+          // Fallback to original if compression fails
+        }
+      }
+      
+      doc.addImage(compressedLogoData, 'JPEG', imgX, yPos, finalWidth, finalHeight)
       yPos += finalHeight + 10
     } catch (error) {
       console.error('Error adding logo image to PDF:', error)
@@ -406,11 +429,12 @@ export async function generatePDF(
       if (!imgData && previewElement) {
         const canvas = await html2canvas(previewElement, {
           backgroundColor: '#040507',
-          scale: 2.5,
+          scale: 1.5, // Reduced from 2.5 to reduce PDF size
           logging: false,
           useCORS: true,
         })
-        imgData = canvas.toDataURL('image/png')
+        // Compress to JPEG for smaller PDF size
+        imgData = canvas.toDataURL('image/jpeg', 0.8)
         img = new Image()
         img.src = imgData
         await new Promise<void>((resolve) => {
@@ -438,7 +462,30 @@ export async function generatePDF(
         doc.setLineWidth(0.5)
         doc.roundedRect(imgX - 1, yPos - 1, finalWidth + 2, finalHeight + 2, 2, 2, 'S')
         
-        doc.addImage(imgData, 'PNG', imgX, yPos, finalWidth, finalHeight)
+        // Compress image to JPEG for smaller PDF size (quality 0.75)
+        let compressedImgData = imgData
+        if (imgData.startsWith('data:image/png') || imgData.startsWith('data:image')) {
+          try {
+            const canvas = document.createElement('canvas')
+            const tempImg = new Image()
+            await new Promise<void>((resolve, reject) => {
+              tempImg.onload = () => resolve()
+              tempImg.onerror = reject
+              tempImg.src = imgData
+            })
+            canvas.width = tempImg.width
+            canvas.height = tempImg.height
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+              ctx.drawImage(tempImg, 0, 0)
+              compressedImgData = canvas.toDataURL('image/jpeg', 0.75)
+            }
+          } catch {
+            // Fallback to original if compression fails
+          }
+        }
+        
+        doc.addImage(compressedImgData, 'JPEG', imgX, yPos, finalWidth, finalHeight)
         yPos += finalHeight + 10
       }
     } catch (error) {
