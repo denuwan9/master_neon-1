@@ -85,12 +85,18 @@ const sendNeonRequestEmail = async (request) => {
   // Build HTML based on category
   let designDetails = ''
   if (request.config?.category === 'name') {
+    const nameConfig = request.config
+    let templateInfo = ''
+    if (nameConfig.selectedTemplate) {
+      templateInfo = `<p><strong>Template:</strong> ${nameConfig.selectedTemplate}</p>`
+    }
     designDetails = `
       <p><strong>Category:</strong> Name Sign</p>
-      <p><strong>Text:</strong> ${request.config.text}</p>
-      <p><strong>Font:</strong> ${request.config.font}</p>
-      <p><strong>Color:</strong> ${request.config.color}</p>
-      <p><strong>Size:</strong> ${request.config.size}</p>
+      ${templateInfo}
+      <p><strong>Text:</strong> ${nameConfig.text || 'Not specified'}</p>
+      <p><strong>Font:</strong> ${nameConfig.font || 'Not specified'}</p>
+      <p><strong>Color:</strong> ${nameConfig.color || 'Not specified'}</p>
+      <p><strong>Size:</strong> ${nameConfig.size || 'Not specified'}</p>
     `
   } else if (request.config?.category === 'logo') {
     designDetails = `

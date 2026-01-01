@@ -10,31 +10,118 @@ const ContactPage = () => {
     message: '',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<{
+    name?: string
+    email?: string
+    phone?: string
+    message?: string
+  }>({})
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!form.name || !form.email || !form.message) {
-      setStatus({ type: 'error', message: 'Name, email, and message are required.' })
-      return
+  // Validation functions
+  const validateEmail = (email: string): string | undefined => {
+    if (!email || !email.trim()) return 'Email is required.'
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return 'Please enter a valid email address.'
     }
-    setIsSubmitting(true)
-    setStatus({ type: 'idle', message: '' })
-    try {
-      await api.post('/contact', form)
-      setForm({ name: '', email: '', phone: '', message: '' })
-      setStatus({ type: 'success', message: "Thanks! We'll respond in 1 business day." })
-    } catch (error) {
-      setStatus({ type: 'error', message: 'Could not send message. Please try again later.' })
-    } finally {
-      setIsSubmitting(false)
+    return undefined
+  }
+
+  const validatePhone = (phone: string): string | undefined => {
+    if (!phone || !phone.trim()) return undefined // Phone is optional
+    // Remove all non-digit characters to count digits
+    const digitsOnly = phone.replace(/\D/g, '')
+    // Must have exactly 10 digits
+    if (digitsOnly.length !== 10) {
+      return 'Phone number must contain exactly 10 digits.'
     }
+    return undefined
   }
 
   const handleFieldChange =
     (field: keyof typeof form) =>
     (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      setForm((prev) => ({ ...prev, [field]: event.target.value }))
+      const value = event.target.value
+      setForm((prev) => ({ ...prev, [field]: value }))
+      
+      // Validate on change
+      if (field === 'email') {
+        const error = validateEmail(value)
+        setValidationErrors((prev) => ({ ...prev, email: error }))
+      } else if (field === 'phone') {
+        const error = validatePhone(value)
+        setValidationErrors((prev) => ({ ...prev, phone: error }))
+      } else if (field === 'name') {
+        if (!value || !value.trim()) {
+          setValidationErrors((prev) => ({ ...prev, name: 'Name is required.' }))
+        } else {
+          setValidationErrors((prev) => ({ ...prev, name: undefined }))
+        }
+      } else if (field === 'message') {
+        if (!value || !value.trim()) {
+          setValidationErrors((prev) => ({ ...prev, message: 'Message is required.' }))
+        } else {
+          setValidationErrors((prev) => ({ ...prev, message: undefined }))
+        }
+      }
     }
+
+  const validateForm = (): boolean => {
+    const errors: { name?: string; email?: string; phone?: string; message?: string } = {}
+    
+    // Validate name
+    if (!form.name || !form.name.trim()) {
+      errors.name = 'Name is required.'
+    }
+
+    // Validate email
+    const emailError = validateEmail(form.email)
+    if (emailError) {
+      errors.email = emailError
+    }
+
+    // Validate phone if provided
+    if (form.phone && form.phone.trim()) {
+      const phoneError = validatePhone(form.phone)
+      if (phoneError) {
+        errors.phone = phoneError
+      }
+    }
+
+    // Validate message
+    if (!form.message || !form.message.trim()) {
+      errors.message = 'Message is required.'
+    }
+
+    setValidationErrors(errors)
+    
+    if (Object.keys(errors).some(key => errors[key as keyof typeof errors] !== undefined)) {
+      const firstError = Object.values(errors).find(err => err !== undefined)
+      setStatus({ type: 'error', message: firstError || 'Please fix the errors below.' })
+      return false
+    }
+
+    return true
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!validateForm()) return
+    
+    setIsSubmitting(true)
+    setStatus({ type: 'idle', message: '' })
+    try {
+      await api.post('/contact', form)
+      setForm({ name: '', email: '', phone: '', message: '' })
+      setValidationErrors({})
+      setStatus({ type: 'success', message: "Thanks! We'll respond in 1 business day." })
+    } catch (error: any) {
+      const errorMessage = error?.response?.data?.message || 'Could not send message. Please try again later.'
+      setStatus({ type: 'error', message: errorMessage })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   return (
     <div className="grid gap-8 lg:grid-cols-2">
@@ -67,31 +154,71 @@ const ContactPage = () => {
 
       <form className="glass-panel border border-white/10 p-6" onSubmit={handleSubmit}>
         <div className="space-y-4">
-          <input
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-            placeholder="Name"
-            value={form.name}
-            onChange={handleFieldChange('name')}
-          />
-          <input
-            type="email"
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-            placeholder="Email"
-            value={form.email}
-            onChange={handleFieldChange('email')}
-          />
-          <input
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-            placeholder="Phone"
-            value={form.phone}
-            onChange={handleFieldChange('phone')}
-          />
-          <textarea
-            className="min-h-[160px] w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-            placeholder="How can we help?"
-            value={form.message}
-            onChange={handleFieldChange('message')}
-          />
+          <div>
+            <input
+              className={`w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                validationErrors.name
+                  ? 'border-red-400 focus:border-red-400'
+                  : 'border-white/10 focus:border-pink-400'
+              }`}
+              placeholder="Name *"
+              value={form.name}
+              onChange={handleFieldChange('name')}
+              required
+            />
+            {validationErrors.name && (
+              <p className="mt-1 text-xs text-red-400">{validationErrors.name}</p>
+            )}
+          </div>
+          <div>
+            <input
+              type="email"
+              className={`w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                validationErrors.email
+                  ? 'border-red-400 focus:border-red-400'
+                  : 'border-white/10 focus:border-pink-400'
+              }`}
+              placeholder="Email *"
+              value={form.email}
+              onChange={handleFieldChange('email')}
+              required
+            />
+            {validationErrors.email && (
+              <p className="mt-1 text-xs text-red-400">{validationErrors.email}</p>
+            )}
+          </div>
+          <div>
+            <input
+              type="tel"
+              className={`w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                validationErrors.phone
+                  ? 'border-red-400 focus:border-red-400'
+                  : 'border-white/10 focus:border-pink-400'
+              }`}
+              placeholder="Phone (optional)"
+              value={form.phone}
+              onChange={handleFieldChange('phone')}
+            />
+            {validationErrors.phone && (
+              <p className="mt-1 text-xs text-red-400">{validationErrors.phone}</p>
+            )}
+          </div>
+          <div>
+            <textarea
+              className={`min-h-[160px] w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                validationErrors.message
+                  ? 'border-red-400 focus:border-red-400'
+                  : 'border-white/10 focus:border-pink-400'
+              }`}
+              placeholder="How can we help? *"
+              value={form.message}
+              onChange={handleFieldChange('message')}
+              required
+            />
+            {validationErrors.message && (
+              <p className="mt-1 text-xs text-red-400">{validationErrors.message}</p>
+            )}
+          </div>
           {status.type !== 'idle' && (
             <p className={`text-sm ${status.type === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{status.message}</p>
           )}

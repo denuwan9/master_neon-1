@@ -51,6 +51,7 @@ const BuilderPage = () => {
   const [validationErrors, setValidationErrors] = useState<{
     email?: string
     phone?: string
+    customerName?: string
   }>({})
   // PDF is generated but not sent to reduce payload size - user can download separately
   const [, setGeneratedPdfBase64] = useState<string | null>(null)
@@ -152,25 +153,31 @@ const BuilderPage = () => {
 
 
   const validateCustomerDetails = (): boolean => {
+    const errors: { email?: string; phone?: string; customerName?: string } = {}
+    
     // Validate required fields
-    if (!customerDetails.customerName || !customerDetails.email) {
-      setStatus({ type: 'error', message: 'Name and email are required.' })
+    if (!customerDetails.customerName || !customerDetails.customerName.trim()) {
+      errors.customerName = 'Name is required.'
+      setStatus({ type: 'error', message: 'Name is required.' })
+      setValidationErrors(errors)
       return false
     }
 
     // Validate email format
     const emailError = validateEmail(customerDetails.email)
     if (emailError) {
-      setValidationErrors((prev) => ({ ...prev, email: emailError }))
+      errors.email = emailError
+      setValidationErrors(errors)
       setStatus({ type: 'error', message: emailError })
       return false
     }
 
     // Validate phone format if provided
-    if (customerDetails.phone) {
+    if (customerDetails.phone && customerDetails.phone.trim()) {
       const phoneError = validatePhone(customerDetails.phone)
       if (phoneError) {
-        setValidationErrors((prev) => ({ ...prev, phone: phoneError }))
+        errors.phone = phoneError
+        setValidationErrors(errors)
         setStatus({ type: 'error', message: phoneError })
         return false
       }
@@ -190,6 +197,29 @@ const BuilderPage = () => {
     const pdfBase64 = await generatePDF(config, customerDetails, previewNode)
     // Store the generated PDF so it can be used when sending email
     setGeneratedPdfBase64(pdfBase64)
+  }
+
+  // Helper function to convert image URL to base64 data URI
+  const convertImageUrlToBase64 = (imageUrl: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0)
+          const dataUrl = canvas.toDataURL('image/png')
+          resolve(dataUrl)
+        } else {
+          reject(new Error('Could not get canvas context'))
+        }
+      }
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = imageUrl
+    })
   }
 
   // Helper function to compress image aggressively
@@ -600,13 +630,22 @@ const BuilderPage = () => {
               }}
             >
               <p className="text-sm uppercase tracking-[0.3em] text-white/40">Customer Details</p>
-              <input
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-                placeholder="Full name *"
-                value={customerDetails.customerName}
-                onChange={handleCustomerChange('customerName')}
-                required
-              />
+              <div>
+                <input
+                  className={`w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                    validationErrors.customerName
+                      ? 'border-red-400 focus:border-red-400'
+                      : 'border-white/10 focus:border-pink-400'
+                  }`}
+                  placeholder="Full name *"
+                  value={customerDetails.customerName}
+                  onChange={handleCustomerChange('customerName')}
+                  required
+                />
+                {validationErrors.customerName && (
+                  <p className="mt-1 text-xs text-red-400">{validationErrors.customerName}</p>
+                )}
+              </div>
               <div>
                 <input
                   type="email"
@@ -781,25 +820,7 @@ const BuilderPage = () => {
                    className="glass-panel space-y-4 border border-white/10 p-6"
                    onSubmit={async (e: FormEvent) => {
                      e.preventDefault()
-                     if (!customerDetails.customerName || !customerDetails.email) {
-                       setStatus({ type: 'error', message: 'Name and email are required.' })
-                       return
-                     }
-                     const emailError = validateEmail(customerDetails.email)
-                     if (emailError) {
-                       setValidationErrors((prev) => ({ ...prev, email: emailError }))
-                       setStatus({ type: 'error', message: emailError })
-                       return
-                     }
-                     if (customerDetails.phone) {
-                       const phoneError = validatePhone(customerDetails.phone)
-                       if (phoneError) {
-                         setValidationErrors((prev) => ({ ...prev, phone: phoneError }))
-                         setStatus({ type: 'error', message: phoneError })
-                         return
-                       }
-                     }
-                     setValidationErrors({})
+                     if (!validateCustomerDetails()) return
                      setIsSending(true)
                      setStatus({ type: 'idle', message: '' })
                      try {
@@ -811,21 +832,37 @@ const BuilderPage = () => {
                          size: templateModalConfig.size,
                          selectedTemplate: selectedTemplateForModal.value,
                        }
-                      const imagePreview = selectedTemplateForModal.imageUrl
-                      // Use stored PDF if available, otherwise generate a new one
-                      let pdfBase64 = templateModalPdfBase64
-                      if (!pdfBase64) {
-                        // generate PDF for template config
-                        pdfBase64 = await generatePDF(config, customerDetails, null)
-                        setTemplateModalPdfBase64(pdfBase64)
-                      }
-                      const response = await api.post('/neon-request', {
-                        ...customerDetails,
-                        config,
-                        imagePreview,
-                        pdfBase64,
-                        timestamp: new Date().toISOString(),
-                      })
+                       
+                       // Convert image URL to base64 data URI for email attachment
+                       let imagePreview: string | undefined = undefined
+                       try {
+                         const base64Image = await convertImageUrlToBase64(selectedTemplateForModal.imageUrl)
+                         // Compress the image to reduce payload size
+                         imagePreview = await compressImage(base64Image, 200)
+                         console.log('Converted template image to base64, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
+                       } catch (imgError) {
+                         console.warn('Failed to convert template image to base64:', imgError)
+                         // Continue without image preview if conversion fails
+                       }
+                       
+                       // Always generate PDF for templates with all details
+                       let pdfBase64: string | undefined = undefined
+                       try {
+                         pdfBase64 = await generatePDF(config, customerDetails, null)
+                         setTemplateModalPdfBase64(pdfBase64)
+                         console.log('Generated PDF for template, size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
+                       } catch (pdfError) {
+                         console.warn('PDF generation failed for template:', pdfError)
+                         // Continue without PDF if generation fails
+                       }
+                       
+                       const response = await api.post('/neon-request', {
+                         ...customerDetails,
+                         config,
+                         imagePreview,
+                         pdfBase64,
+                         timestamp: new Date().toISOString(),
+                       })
                        const responseData = response?.data || {}
                        setStatus({
                          type: 'success',
@@ -851,13 +888,22 @@ const BuilderPage = () => {
                    }}
                  >
                    <p className="text-sm uppercase tracking-[0.3em] text-white/40">Customer Details</p>
-                   <input
-                     className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white focus:border-pink-400 focus:outline-none"
-                     placeholder="Full name *"
-                     value={customerDetails.customerName}
-                     onChange={handleCustomerChange('customerName')}
-                     required
-                   />
+                   <div>
+                     <input
+                       className={`w-full rounded-xl border px-4 py-3 text-sm text-white focus:outline-none bg-black/40 ${
+                         validationErrors.customerName
+                           ? 'border-red-400 focus:border-red-400'
+                           : 'border-white/10 focus:border-pink-400'
+                       }`}
+                       placeholder="Full name *"
+                       value={customerDetails.customerName}
+                       onChange={handleCustomerChange('customerName')}
+                       required
+                     />
+                     {validationErrors.customerName && (
+                       <p className="mt-1 text-xs text-red-400">{validationErrors.customerName}</p>
+                     )}
+                   </div>
                    <div>
                      <input
                        type="email"
@@ -904,25 +950,7 @@ const BuilderPage = () => {
                        variant="secondary"
                        className="flex-1"
                        onClick={async () => {
-                         if (!customerDetails.customerName || !customerDetails.email) {
-                           setStatus({ type: 'error', message: 'Name and email are required.' })
-                           return
-                         }
-                         const emailError = validateEmail(customerDetails.email)
-                         if (emailError) {
-                           setValidationErrors((prev) => ({ ...prev, email: emailError }))
-                           setStatus({ type: 'error', message: emailError })
-                           return
-                         }
-                         if (customerDetails.phone) {
-                           const phoneError = validatePhone(customerDetails.phone)
-                           if (phoneError) {
-                             setValidationErrors((prev) => ({ ...prev, phone: phoneError }))
-                             setStatus({ type: 'error', message: phoneError })
-                             return
-                           }
-                         }
-                         setValidationErrors({})
+                         if (!validateCustomerDetails()) return
                          const config: NameSignConfig = {
                            category: 'name',
                            text: templateModalConfig.text,

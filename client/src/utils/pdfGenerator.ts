@@ -220,7 +220,7 @@ export async function generatePDF(
   doc.setFont('helvetica', 'normal')
   
   if (config.category === 'name') {
-    const nameConfig = config as typeof config & { category: 'name' }
+    const nameConfig = config as typeof config & { category: 'name'; selectedTemplate?: string }
     
     const designFields = [
       { label: 'Category  :', value: 'Name Sign' },
@@ -229,6 +229,14 @@ export async function generatePDF(
       { label: 'Neon Color  :', value: nameConfig.color },
       { label: 'Size  :', value: nameConfig.size.charAt(0).toUpperCase() + nameConfig.size.slice(1) },
     ]
+    
+    // Add template information if this is based on a template
+    if (nameConfig.selectedTemplate) {
+      const template = defaultTemplates.find(t => t.value === nameConfig.selectedTemplate)
+      if (template) {
+        designFields.push({ label: 'Template  :', value: template.label })
+      }
+    }
     
     designFields.forEach((field) => {
       doc.setTextColor(200, 200, 200)
