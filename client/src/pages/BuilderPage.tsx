@@ -309,43 +309,45 @@ const BuilderPage = () => {
         pdfBase64 = undefined
       }
 
-      // Build payload with very conservative size limits to avoid 413 errors
+      // Build payload with extremely strict size limits to avoid 413 errors
       const payload: any = {
         ...customerDetails,
         config,
         timestamp: new Date().toISOString(),
       }
       
-      // Use very conservative limit (1.5MB) to account for JSON encoding overhead
-      const MAX_SAFE_PAYLOAD = 1.5 * 1024 * 1024 // 1.5MB - very conservative
+      // Use extremely strict limit (1MB) to absolutely avoid 413 errors
+      const MAX_SAFE_PAYLOAD = 1.0 * 1024 * 1024 // 1MB - extremely strict
       
       // Check base payload size first
       let basePayloadSize = JSON.stringify(payload).length
       console.log('Base payload size:', (basePayloadSize / 1024).toFixed(2), 'KB')
       
-      // Add image preview only if it fits
-      if (imagePreview && imagePreview.length < 150 * 1024) {
+      // Add image preview only if it fits and is small
+      if (imagePreview && imagePreview.length < 120 * 1024) {
         const tempSize = JSON.stringify({ ...payload, imagePreview }).length
         if (tempSize < MAX_SAFE_PAYLOAD) {
           payload.imagePreview = imagePreview
           console.log('Added image preview, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
         } else {
-          console.warn('Image preview too large, skipping to avoid 413 error')
+          console.warn('Image preview would exceed limit, skipping to avoid 413 error')
         }
       } else if (imagePreview) {
         console.warn('Image preview too large, skipping to avoid 413 error')
       }
       
-      // Check if we can add PDF
+      // Check if we can add PDF - be very strict
       let currentSize = JSON.stringify(payload).length
-      if (pdfBase64) {
+      if (pdfBase64 && pdfBase64.length < 500 * 1024) { // Only if PDF is under 500KB
         const sizeWithPdf = JSON.stringify({ ...payload, pdfBase64 }).length
         if (sizeWithPdf < MAX_SAFE_PAYLOAD) {
           payload.pdfBase64 = pdfBase64
           console.log('Added PDF, size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
         } else {
-          console.warn('PDF too large, skipping to avoid 413 error')
+          console.warn('PDF would exceed limit, skipping to avoid 413 error')
         }
+      } else if (pdfBase64) {
+        console.warn('PDF too large (>500KB), skipping to avoid 413 error')
       }
       
       let payloadSize = JSON.stringify(payload).length
@@ -366,7 +368,7 @@ const BuilderPage = () => {
       }
       
       // Absolute limit - abort if still too large
-      const FINAL_LIMIT = 1.8 * 1024 * 1024 // 1.8MB absolute limit
+      const FINAL_LIMIT = 1.2 * 1024 * 1024 // 1.2MB absolute limit
       if (payloadSize > FINAL_LIMIT) {
         setStatus({
           type: 'error',
@@ -876,66 +878,53 @@ const BuilderPage = () => {
                          // Continue without image preview if conversion fails
                        }
                        
-                       // Always generate PDF for templates with all details
+                       // For templates, skip PDF to avoid 413 errors (PDFs can be very large)
+                       // The designer will receive all details in the email body and can request PDF if needed
                        let pdfBase64: string | undefined = undefined
-                       try {
-                         pdfBase64 = await generatePDF(config, customerDetails, null)
-                         setTemplateModalPdfBase64(pdfBase64)
-                         console.log('Generated PDF for template, size:', (pdfBase64.length / 1024).toFixed(2), 'KB')
-                       } catch (pdfError) {
-                         console.warn('PDF generation failed for template:', pdfError)
-                         // Continue without PDF if generation fails
-                       }
+                       console.log('Skipping PDF for template to avoid 413 error - all details will be in email')
                        
-                       // Build payload and check size before sending
-                       // Use very conservative limits to avoid 413 errors
+                       // Build payload with very strict limits
                        const payload: any = {
                          ...customerDetails,
                          config,
                          timestamp: new Date().toISOString(),
                        }
                        
-                       // Add image preview only if it's small enough
-                       if (imagePreview && imagePreview.length < 120 * 1024) {
-                         payload.imagePreview = imagePreview
-                       }
+                       // Use very strict limit for templates (800KB) to absolutely avoid 413
+                       const MAX_SAFE_PAYLOAD = 800 * 1024 // 800KB - very strict for templates
                        
-                       // Add PDF only if it's small enough, and only if there's room
-                       let tempPayloadSize = JSON.stringify({ ...payload, pdfBase64 }).length
-                       const MAX_SAFE_PAYLOAD = 1.5 * 1024 * 1024 // Very conservative: 1.5MB
-                       
-                       if (pdfBase64 && tempPayloadSize < MAX_SAFE_PAYLOAD) {
-                         payload.pdfBase64 = pdfBase64
-                       } else if (pdfBase64) {
-                         console.warn('PDF too large, skipping to avoid 413 error')
+                       // Add image preview only if it's very small
+                       let baseSize = JSON.stringify(payload).length
+                       if (imagePreview && imagePreview.length < 100 * 1024) {
+                         const sizeWithImage = JSON.stringify({ ...payload, imagePreview }).length
+                         if (sizeWithImage < MAX_SAFE_PAYLOAD) {
+                           payload.imagePreview = imagePreview
+                           console.log('Added image preview, size:', (imagePreview.length / 1024).toFixed(2), 'KB')
+                         } else {
+                           console.warn('Image preview would exceed limit, skipping')
+                         }
+                       } else if (imagePreview) {
+                         console.warn('Image preview too large, skipping to avoid 413 error')
                        }
                        
                        // Final size check
                        let payloadSize = JSON.stringify(payload).length
                        console.log('Template payload size:', (payloadSize / 1024).toFixed(2), 'KB')
                        
-                       // If still too large, remove PDF
-                       if (payloadSize > MAX_SAFE_PAYLOAD && payload.pdfBase64) {
-                         console.warn('Template payload too large, removing PDF')
-                         payload.pdfBase64 = undefined
-                         payloadSize = JSON.stringify(payload).length
-                         console.log('Payload size after removing PDF:', (payloadSize / 1024).toFixed(2), 'KB')
-                       }
-                       
                        // Remove image if still too large
                        if (payloadSize > MAX_SAFE_PAYLOAD && payload.imagePreview) {
-                         console.warn('Template payload still too large, removing image preview')
+                         console.warn('Template payload too large, removing image preview')
                          payload.imagePreview = undefined
                          payloadSize = JSON.stringify(payload).length
                          console.log('Payload size after removing imagePreview:', (payloadSize / 1024).toFixed(2), 'KB')
                        }
                        
-                       // Final guard - abort if still too large
-                       const FINAL_LIMIT = 2.0 * 1024 * 1024 // 2MB absolute limit
+                       // Final guard - abort if still too large (shouldn't happen, but safety check)
+                       const FINAL_LIMIT = 1000 * 1024 // 1MB absolute limit
                        if (payloadSize > FINAL_LIMIT) {
                          setStatus({
                            type: 'error',
-                           message: 'Request too large. Design details will be sent, but attachments were removed to ensure delivery.',
+                           message: 'Request too large. Please try again - design details will be sent without attachments.',
                          })
                          setIsSending(false)
                          return
